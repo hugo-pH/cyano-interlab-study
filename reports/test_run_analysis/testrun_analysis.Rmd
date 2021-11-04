@@ -1,0 +1,579 @@
+---
+title: "Interlab study"
+subtitle: "Test run"
+author: "Hugo Pineda Hernandez"
+date: "`r strftime(Sys.Date(), '%B %d %Y')`"
+output: 
+  html_document:
+    toc: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE, warning=FALSE, message = FALSE
+  
+)
+
+library("tidyverse")
+library(ggthemes)
+library(cowplot)
+library(ggridges)
+theme_set(theme_light(14))
+```
+
+```{r load_data, include=FALSE}
+# Load project settings
+source(here::here("settings.R"))
+# load functions
+source(file.path(data.raw.dir, "experiments.R"))
+
+df.pr.od.raw <- load_plate_reader_od()
+
+df.pr.fl.raw <- load_plate_reader_fl()
+
+df.spectrophotometer <- load_spectrophotometer() 
+
+df.full.spectrum.raw <- load_full_spectrum()
+```
+
+```{r}
+
+df.pr.od.blank <- df.pr.od.raw %>% 
+  filter(!is.na(OD_730), sample_type == "blank") %>% 
+  group_by(experiment_date, location, time_h) %>% 
+  summarise(
+    blank_OD_730 = mean(OD_730)
+  ) %>% 
+  ungroup()
+  
+df.pr.od <- df.pr.od.raw %>% 
+  filter(!is.na(OD_730), sample_type == "sample") %>% 
+  left_join(df.pr.od.blank, by = c("experiment_date", "location", "time_h")) %>% 
+  mutate(
+    # correct with blank
+    OD_730_bc = OD_730 - blank_OD_730
+  ) 
+  
+```
+
+```{r}
+
+df.pr.fl.blank <- df.pr.fl.raw %>% 
+  filter(sample_type == "blank") %>% 
+  group_by(experiment_date, location, time_h) %>% 
+  summarise(
+    blank_fl = mean(fl)
+  ) %>% 
+  ungroup()
+  
+
+df.pr.fl <- df.pr.fl.raw %>% 
+  filter(sample_type == "sample") %>% 
+   left_join(df.pr.fl.blank,
+              by = c("experiment_date", "location", "time_h")) %>% 
+  mutate(
+    # correct with blank
+    fl_bc = fl - blank_fl
+  ) 
+```
+
+
+```{r}
+df.pr <- full_join(
+  df.pr.od, 
+  df.pr.fl,
+  by = c("strain", "induction", "bio_replicate", "location", "tech_replicate", "experiment_date", "experiment_id", "time_h", "sample_type")
+  ) %>% 
+    mutate(
+    fl_od = fl_bc / OD_730_bc
+  ) 
+```
+
+
+
+```{r}
+
+color.scheme.4 <- c("Amsterdam" = "#D55E00", 
+                  "Düsseldorf" = "#CC79A7",
+                  "Jena" = "#009E73",
+                  "Seville" = "#0072B2")
+
+color.scheme.3 <- c("Amsterdam" = "#D55E00", 
+                  "Jena" = "#009E73",
+                  "Seville" = "#0072B2")
+
+
+plot_summary_location_strain <- function(){
+  list(
+  stat_summary(fun.data = "mean_cl_boot", geom = "point", alpha = 0.6),
+  stat_summary(fun.data = "mean_sdl", geom = "errorbar", alpha = 0.6),
+  stat_summary(fun.data = "mean_cl_boot", geom = "line", alpha = 0.6),
+  facet_grid(location~strain, scales = "free_y"),
+    scale_colour_colorblind(),
+  theme(legend.position = "bottom")
+  )
+}
+
+plot_summary_ind_strain <- function(colors.scheme){
+  list(
+  stat_summary(fun.data = "mean_cl_boot", geom = "point", alpha = 0.6),
+  stat_summary(fun.data = "mean_sdl", geom = "errorbar", alpha = 0.6),
+  stat_summary(fun.data = "mean_cl_boot", geom = "line", alpha = 0.6),
+  facet_grid(induction~strain),
+  expand_limits(y = 0),
+  scale_colour_manual(
+    breaks = names(colors.scheme),
+    values = colors.scheme
+    ),
+  theme(legend.position = "bottom")
+  )
+}
+```
+
+
+# Plate reader data
+
+## Plate reader raw data
+
+### OD<sub>730</sub>
+
+```{r, fig.width=11.11, fig.height=7, out.width="100%"}
+df.pr.od %>% 
+  ggplot(aes(x = time_h, y = OD_730, colour = induction)) +
+  plot_summary_location_strain() +
+  labs(
+    x = p.label.time.h,
+    y = p.label.od.730
+  )
+```
+
+```{r, fig.width=11.11, fig.height=6.25, out.width="100%"}
+df.pr.od %>% 
+  ggplot(aes(x = time_h, y = OD_730, colour = location)) +
+ plot_summary_ind_strain(colors.scheme = color.scheme.3) + 
+  labs(
+    x = p.label.time.h,
+    y = p.label.od.730,
+    colour = ""
+  ) 
+```
+
+### Fluorescence
+
+```{r, fig.width=11.11, fig.height=7, out.width="100%"}
+df.pr.fl %>% 
+  ggplot(aes(x = time_h, y = fl, colour = induction)) +
+  plot_summary_location_strain() +
+  labs(
+    x = p.label.time.h,
+    y = "Raw flourescence"
+  ) 
+```
+
+
+```{r, fig.width=11.11, fig.height=6.25, out.width="100%"}
+df.pr.fl %>% 
+  ggplot(aes(x = time_h, y = fl, colour = location)) +
+   plot_summary_ind_strain(colors.scheme = color.scheme.4) + 
+  labs(
+    x = p.label.time.h,
+    y = "Raw flourescence",
+    colour = ""
+  ) 
+```
+
+
+## Plate reader normalized data
+
+
+### OD<sub>730</sub> corrected by blank
+
+```{r, fig.width=11.11, fig.height=7, out.width="100%"}
+df.pr %>% 
+  filter(!is.na(OD_730_bc)) %>% 
+  ggplot(aes(x = time_h, y = OD_730_bc, colour = induction)) +
+  plot_summary_location_strain() +
+  labs(
+    x = p.label.time.h,
+    y = p.label.od.730
+  ) 
+```
+
+
+```{r, fig.width=11.11, fig.height=6.25, out.width="100%"}
+df.pr %>% 
+  filter(!is.na(OD_730_bc)) %>%
+  ggplot(aes(x = time_h, y = OD_730_bc, colour = location)) +
+   plot_summary_ind_strain(colors.scheme = color.scheme.3) + 
+  labs(
+    x = p.label.time.h,
+    y = p.label.od.730,
+    colour = ""
+  ) 
+```
+
+
+### Background corrected flourescence
+
+```{r, fig.width=11.11, fig.height=7, out.width="100%"}
+df.pr %>% 
+  ggplot(aes(x = time_h, y = fl_bc, colour = induction)) +
+  plot_summary_location_strain() +
+  labs(
+    x = p.label.time.h,
+    y = "Background corrected flourescence"
+  ) 
+```
+
+
+```{r, fig.width=11.11, fig.height=6.25, out.width="100%"}
+df.pr %>% 
+  ggplot(aes(x = time_h, y = fl_bc, colour = location)) +
+   plot_summary_ind_strain(colors.scheme = color.scheme.4) + 
+  labs(
+    x = p.label.time.h,
+    y = "Background corrected flourescence",
+    colour = ""
+  ) 
+```
+
+
+
+## Background corrected flourescence and normalized by OD<sub>730</sub>
+ 
+ 
+```{r, fig.width=11.11, fig.height=7, out.width="100%"}
+df.pr %>% 
+  filter(!is.na(fl_od)) %>%
+  ggplot(aes(x = time_h, y = fl_od, colour = induction)) +
+  plot_summary_location_strain() +
+  labs(
+    x = p.label.time.h,
+    y = p.label.fl.od
+  ) 
+```
+
+
+```{r, fig.width=11.11, fig.height=6.25, out.width="100%"}
+df.pr %>% 
+   filter(!is.na(fl_od)) %>%
+  ggplot(aes(x = time_h, y = fl_od, colour = location)) +
+   plot_summary_ind_strain(colors.scheme = color.scheme.3) + 
+  labs(
+    x = p.label.time.h,
+    y = p.label.fl.od,
+    colour = ""
+  ) 
+```
+
+
+
+## Normalization by PJ23100 -
+
+```{r}
+df.pr.sum <- df.pr %>% 
+  group_by(experiment_date, location, time_h, strain, induction) %>% 
+  summarise(
+    fl_od = mean(fl_od)
+  )
+```
+
+```{r}
+df.pr.sum.j23 <- df.pr.sum %>% 
+  ungroup() %>% 
+  filter(strain == "J23100", induction == "-") %>% 
+  rename(fl_od_j23 = fl_od) %>% 
+  select(-c(strain, induction))
+```
+
+```{r}
+df.pr.norm.j23 <- left_join(
+  df.pr.sum,
+  df.pr.sum.j23, 
+  by = c("experiment_date", "location", "time_h")
+) %>% 
+  mutate(
+    fl_od_j23_norm = fl_od /  fl_od_j23
+  )
+```
+
+
+
+```{r, fig.width=11.11, fig.height=7, out.width="100%"}
+df.pr.norm.j23 %>% 
+  filter(!is.na(fl_od_j23_norm)) %>%
+  ggplot(aes(x = time_h, y = fl_od_j23_norm, colour = induction)) +
+  plot_summary_location_strain() +
+  labs(
+    x = p.label.time.h,
+    y = p.label.norm.fl.od
+  ) 
+```
+
+
+```{r, fig.width=11.11, fig.height=6.25, out.width="100%"}
+df.pr.norm.j23 %>% 
+  filter(!is.na(fl_od_j23_norm)) %>%
+  ggplot(aes(x = time_h, y = fl_od_j23_norm, colour = location)) +
+   plot_summary_ind_strain(colors.scheme = color.scheme.3) + 
+  labs(
+    x = p.label.time.h,
+    y = p.label.norm.fl.od,
+    colour = ""
+  ) 
+```
+
+
+## Normalization by PJ23100 - and t0
+
+```{r}
+df.pr.t0 <- df.pr.norm.j23 %>% 
+  ungroup() %>% 
+  filter(time_h == 0) %>% 
+  select(
+    fl_od_t0 = fl_od_j23_norm,
+    experiment_date, 
+    location,
+    strain,
+    induction
+    
+  )
+```
+
+```{r}
+df.pr.norm.j23.t0 <- df.pr.norm.j23 %>% 
+  left_join(df.pr.t0) %>% 
+  mutate(
+    fl_od_j23_t0_norm = fl_od_j23_norm / fl_od_t0
+  )
+```
+
+
+
+
+```{r, fig.width=11.11, fig.height=7, out.width="100%"}
+df.pr.norm.j23.t0 %>% 
+  filter(!is.na(fl_od_j23_norm)) %>%
+  ggplot(aes(x = time_h, y = fl_od_j23_t0_norm, colour = induction)) +
+  plot_summary_location_strain() +
+  labs(
+    x = p.label.time.h,
+    y = p.label.norm.fl.od
+  ) 
+```
+
+
+```{r, fig.width=11.11, fig.height=6.25, out.width="100%"}
+df.pr.norm.j23.t0 %>% 
+  filter(!is.na(fl_od_j23_norm)) %>%
+  ggplot(aes(x = time_h, y = fl_od_j23_t0_norm, colour = location)) +
+   plot_summary_ind_strain(colors.scheme = color.scheme.3) + 
+  labs(
+    x = p.label.time.h,
+    y = p.label.norm.fl.od,
+    colour = ""
+  ) 
+```
+
+
+## Normalization by t0
+
+
+```{r}
+df.pr.t0 <-  df.pr %>% 
+  ungroup() %>% 
+  filter(time_h == 0) %>% 
+  select(
+    fl_od_t0 = fl_od,
+    experiment_date, 
+    location,
+    strain,
+    tech_replicate,
+    induction
+  )
+```
+
+```{r}
+df.pr.t0.norm <- df.pr %>% 
+  left_join(df.pr.t0, 
+            by = c("strain", "induction", 
+                   "location", "tech_replicate", 
+                   "experiment_date")) %>% 
+  mutate(
+    fl_od_t0_norm = fl_od / fl_od_t0
+  )
+```
+
+
+
+```{r, fig.width=11.11, fig.height=7, out.width="100%"}
+df.pr.t0.norm %>% 
+  filter(!is.na(fl_od_t0_norm)) %>%
+  ggplot(aes(x = time_h, y = fl_od_t0_norm, colour = induction)) +
+  plot_summary_location_strain() +
+  labs(
+    x = p.label.time.h,
+    y = p.label.norm.fl.od
+  ) 
+```
+
+
+```{r, fig.width=11.11, fig.height=6.25, out.width="100%"}
+df.pr.t0.norm %>% 
+  filter(!is.na(fl_od_t0_norm)) %>%
+  ggplot(aes(x = time_h, y = fl_od_t0_norm, colour = location)) +
+   plot_summary_ind_strain(colors.scheme = color.scheme.3) + 
+  labs(
+    x = p.label.time.h,
+    y = p.label.norm.fl.od,
+    colour = ""
+  ) 
+```
+
+
+### Removing EVC from figures
+
+
+```{r, fig.width=11.11, fig.height=7, out.width="100%"}
+df.pr.t0.norm %>% 
+  filter(!is.na(fl_od_t0_norm), strain != "EVC") %>%
+  ggplot(aes(x = time_h, y = fl_od_t0_norm, colour = induction)) +
+  plot_summary_location_strain() +
+  labs(
+    x = p.label.time.h,
+    y = p.label.norm.fl.od
+  ) 
+```
+
+
+```{r, fig.width=11.11, fig.height=6.25, out.width="100%"}
+df.pr.t0.norm %>% 
+  filter(!is.na(fl_od_t0_norm), strain != "EVC") %>%
+  ggplot(aes(x = time_h, y = fl_od_t0_norm, colour = location)) +
+   plot_summary_ind_strain(colors.scheme = color.scheme.3) + 
+  labs(
+    x = p.label.time.h,
+    y = p.label.norm.fl.od,
+    colour = ""
+  ) 
+```
+
+# Spectrophotometer OD<sub>730</sub>
+
+```{r, fig.width=11.11, fig.height=7, out.width="100%"}
+df.spectrophotometer %>% 
+  filter(!is.na(OD_730)) %>% 
+  ggplot(aes(x = time_h, y = OD_730, colour = induction)) +
+  plot_summary_location_strain() + 
+  labs(
+    x = p.label.time.h,
+    y = p.label.od.730
+  )
+```
+
+```{r, fig.width=11.11, fig.height=6.25, out.width="100%"}
+df.spectrophotometer %>% 
+  filter(!is.na(OD_730)) %>% 
+  ggplot(aes(x = time_h, y = OD_730, colour = location)) +
+  plot_summary_ind_strain(colors.scheme = color.scheme.3) + 
+  labs(
+    x = p.label.time.h,
+    y = p.label.od.730
+  )
+```
+
+# Full spectrum
+
+## Normalized each measurement from 0 to 1
+
+```{r}
+df.full.spectrum <- df.full.spectrum.raw %>% 
+  filter(!is.na(abs)) %>% 
+  group_by(location, experiment_date, strain, induction, time_h) %>% 
+  mutate(
+    norm_abs = (abs  - min(abs)) / (max(abs) - min(abs))
+   ) %>% 
+  ungroup() %>% 
+  mutate(
+    location = stringr::str_to_title(location),
+    induction = ifelse(is.na(induction), "Time 0", induction)
+  )
+
+```
+
+### Time 0
+
+```{r, fig.width=8.4375, fig.height=7.916667, out.width="100%"}
+df.full.spectrum %>% 
+  filter(time_h == 0) %>% 
+  ggplot(aes(x = nm, y = norm_abs, colour = location)) +
+  geom_line() +
+  facet_wrap(~strain) +
+  scale_colour_manual(
+    breaks = names(color.scheme.3),
+    values = color.scheme.3
+    ) +
+  labs(
+    x = p.label.nm,
+    y = p.label.norm.abs
+  ) +
+  theme(legend.position = "bottom")
+```
+
+
+### All time points 
+
+Note: Time in y-axis is not proportionally represented to real time 
+
+```{r, fig.width=11.11, fig.height=7, out.width="100%"}
+df.full.spectrum %>% 
+  ggplot(aes(x = nm, y = as.factor(time_h), height = norm_abs, colour = induction, fill = induction, group = interaction(time_h, induction))) +
+  geom_ridgeline(alpha = 0.05)  +
+    facet_grid(location~strain) +
+  labs(
+    x = p.label.nm,
+    y = p.label.time.h
+  ) +
+  theme(legend.position = "bottom")
+```
+
+```{r, fig.width=11.11, fig.height=6.25, out.width="100%"}
+
+bind_rows(
+  df.full.spectrum %>% 
+  filter(induction == "Time 0") %>% 
+  mutate(
+    induction = "+"
+  ),
+  df.full.spectrum %>% 
+  filter(induction == "Time 0") %>% 
+  mutate(
+    induction = "-"
+  ) 
+) %>% 
+  bind_rows(
+    df.full.spectrum %>% 
+  filter(induction != "Time 0")    
+  ) %>% 
+  ggplot(aes(x = nm, y = as.factor(time_h), height = norm_abs, colour = location, fill = location, group = interaction(time_h, location))) +
+  geom_ridgeline(alpha = 0.05)  +
+  facet_grid(induction~strain) +
+  labs(y = "Time (h)") +
+  scale_colour_manual(
+    breaks = names(color.scheme.3),
+    values = color.scheme.3,
+    
+    ) +
+  scale_fill_manual(
+    breaks = names(color.scheme.3),
+    values = color.scheme.3
+    ) +
+  labs(
+    x = p.label.nm,
+    y = p.label.norm.abs,
+    colour = ""
+  ) +
+  guides(fill = "none") +
+  theme(legend.position = "bottom")
+```

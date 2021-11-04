@@ -1,0 +1,291 @@
+---
+title: "Interlab study"
+subtitle: "Test run"
+author: "Hugo Pineda Hernandez"
+date: "`r strftime(Sys.Date(), '%B %d %Y')`"
+output: 
+  html_document:
+    toc: true
+    number_sections: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE, warning=FALSE, message = FALSE
+  
+)
+
+library("tidyverse")
+library(ggthemes)
+library(cowplot)
+library(ggridges)
+theme_set(theme_light(14))
+```
+
+```{r load_data, include=FALSE}
+# Load project settings
+source(here::here("settings.R"))
+# load functions
+source(file.path(data.raw.dir, "experiments.R"))
+
+df.pr.od.raw <- load_plate_reader_od()
+
+df.pr.fl.raw <- load_plate_reader_fl()
+
+df.spectrophotometer <- load_spectrophotometer() 
+
+df.full.spectrum.raw <- load_full_spectrum()
+```
+
+```{r}
+
+df.pr.od.blank <- df.pr.od.raw %>% 
+  filter(!is.na(OD_730), sample_type == "blank") %>% 
+  group_by(experiment_date, location, time_h) %>% 
+  summarise(
+    blank_OD_730 = mean(OD_730)
+  ) %>% 
+  ungroup()
+  
+df.pr.od <- df.pr.od.raw %>% 
+  filter(!is.na(OD_730), sample_type == "sample") %>% 
+  left_join(df.pr.od.blank, by = c("experiment_date", "location", "time_h")) %>% 
+  mutate(
+    # correct with blank
+    OD_730_bc = OD_730 - blank_OD_730
+  ) 
+  
+```
+
+```{r}
+
+df.pr.fl.blank <- df.pr.fl.raw %>% 
+  filter(sample_type == "blank") %>% 
+  group_by(experiment_date, location, time_h) %>% 
+  summarise(
+    blank_fl = mean(fl)
+  ) %>% 
+  ungroup()
+  
+
+df.pr.fl <- df.pr.fl.raw %>% 
+  filter(sample_type == "sample") %>% 
+   left_join(df.pr.fl.blank,
+              by = c("experiment_date", "location", "time_h")) %>% 
+  mutate(
+    # correct with blank
+    fl_bc = fl - blank_fl
+  ) 
+```
+
+
+```{r}
+df.pr <- full_join(
+  df.pr.od, 
+  df.pr.fl,
+  by = c("strain", "induction", "bio_replicate", "location", "tech_replicate", "experiment_date", "experiment_id", "time_h", "sample_type")
+  )  
+  #   mutate(
+  #   fl_od = fl_bc / OD_730_bc
+  # ) 
+```
+
+
+
+```{r}
+
+color.scheme.4 <- c("Amsterdam" = "#D55E00", 
+                  "Düsseldorf" = "#CC79A7",
+                  "Jena" = "#009E73",
+                  "Seville" = "#0072B2")
+
+color.scheme.3 <- c("Amsterdam" = "#D55E00", 
+                  "Jena" = "#009E73",
+                  "Seville" = "#0072B2")
+
+
+plot_summary_location_strain <- function(){
+  list(
+  stat_summary(fun.data = "mean_cl_boot", geom = "point", alpha = 0.6),
+  stat_summary(fun.data = "mean_sdl", geom = "errorbar", alpha = 0.6),
+  stat_summary(fun.data = "mean_cl_boot", geom = "line", alpha = 0.6),
+  facet_grid(location~strain, scales = "free_y"),
+    scale_colour_colorblind(),
+  theme(legend.position = "bottom")
+  )
+}
+
+plot_summary_ind_strain <- function(colors.scheme){
+  list(
+  stat_summary(fun = "mean", geom = "point", alpha = 0.6),
+  # stat_summary(fun.data = "mean_sdl", geom = "errorbar", alpha = 0.6),
+  stat_summary(fun = "mean", geom = "line", alpha = 0.6),
+  facet_grid(induction~strain),
+  expand_limits(y = 0),
+  scale_colour_manual(
+    breaks = names(colors.scheme),
+    values = colors.scheme
+    ),
+  theme(legend.position = "bottom")
+  )
+}
+```
+
+
+# Plate reader data
+
+## Plate reader raw data
+
+### OD<sub>730</sub>
+
+```{r, fig.width=11.11, fig.height=7, out.width="100%"}
+df.pr.od %>% 
+  ggplot(aes(x = time_h, y = OD_730, colour = induction)) +
+  plot_summary_location_strain() +
+  labs(
+    x = p.label.time.h,
+    y = p.label.od.730
+  )
+```
+
+```{r, fig.width=11.11, fig.height=6.25, out.width="100%"}
+df.pr.od %>% 
+  ggplot(aes(x = time_h, y = OD_730, colour = location)) +
+ plot_summary_ind_strain(colors.scheme = color.scheme.3) + 
+  labs(
+    x = p.label.time.h,
+    y = p.label.od.730,
+    colour = ""
+  ) 
+```
+
+### Fluorescence
+
+```{r, fig.width=11.11, fig.height=7, out.width="100%"}
+df.pr.fl %>% 
+  ggplot(aes(x = time_h, y = fl, colour = induction)) +
+  plot_summary_location_strain() +
+  labs(
+    x = p.label.time.h,
+    y = "Raw flourescence"
+  ) 
+```
+
+
+```{r, fig.width=11.11, fig.height=6.25, out.width="100%"}
+df.pr.fl %>% 
+  ggplot(aes(x = time_h, y = fl, colour = location)) +
+   plot_summary_ind_strain(colors.scheme = color.scheme.4) + 
+  labs(
+    x = p.label.time.h,
+    y = "Raw flourescence",
+    colour = ""
+  ) 
+```
+
+
+
+## Plate reader data normalization
+
+* Step 1, background OD<sub>730</sub> correction:
+  - Calculate average OD<sub>730</sub> of blank wells for each timepoint
+  - Subtract blank average OD<sub>730</sub> from the rest of the wells for each timepoint
+
+* Step 2, EVC normalization:
+  - For each timepoint, calculate the average raw fluorescence / OD<sub>730</sub> of ALL the EVC wells
+  - For each timepoint, calculate raw fluorescence / OD<sub>730</sub> for each well
+  - For each timepoint, subtract the average EVC fluorescence / OD<sub>730</sub> from the fluorescence / OD<sub>730</sub> of each well
+  
+This step corrects for autofluorescence and background fluorescence at the same time and it also normalizes for the biomass.   
+
+* Step 3, summarize:
+  - Take the average of the background corrected fluorescence / OD<sub>730</sub> caculated in the previous step, for each experiment, strain, condition and timepoint.
+  
+* Step 4, 0 to 1 normalization:
+  - For each experiment, normalize the average ratios calculated previously from 0 to 1 by using the min max method:
+    $\frac{\frac{F}{OD_{730}} - min(\frac{F}{OD_{730}})}{ max(\frac{F}{OD_{730}}) -  min(\frac{F}{OD_{730}})}$
+
+This step allows to compare the ratios between labs.
+  
+```{r}
+
+df.pr.evc <- df.pr %>%
+  filter(strain == "EVC", !is.na(OD_730_bc)) %>%
+  group_by(location, experiment_date, time_h) %>%
+  mutate(
+    fl_od_evc = fl / OD_730_bc
+  ) %>%
+  summarise(
+    fl_od_evc = mean(fl_od_evc)
+  ) %>%
+  ungroup()
+
+
+df.pr.norm <- df.pr %>%
+  filter(!is.na(OD_730_bc)) %>%
+  left_join(df.pr.evc, by = c("location", "experiment_date", "time_h")) %>%
+  group_by(location, experiment_date, strain, induction, tech_replicate, time_h) %>%
+  mutate(
+    fl_od = fl / OD_730_bc,
+    fl_od_norm = fl_od - fl_od_evc
+  ) %>% 
+  group_by(location, experiment_date, strain, induction, time_h) %>%
+  summarise(
+    fl_od_norm = mean(fl_od_norm)
+  ) %>%
+  group_by(location, experiment_date) %>%
+  mutate(
+    fl_od_norm_0_to_1 = (fl_od_norm - min(fl_od_norm)) / (max(fl_od_norm) - min(fl_od_norm))
+  ) %>%
+  ungroup()
+
+```
+   
+   
+### Results after step 3
+
+Mind the different scales in Y-axis.
+
+```{r, fig.width=11.11, fig.height=7, out.width="100%"}
+df.pr.norm %>% 
+  ggplot(aes(x = time_h, y = fl_od_norm, colour = induction)) +
+  plot_summary_location_strain() +
+  labs(
+    x = p.label.time.h,
+    y = bquote("Background corrected fluorescence"%.%"OD"[730]^-1)
+  ) 
+```
+
+```{r, fig.width=11.11, fig.height=6.25, out.width="100%"}
+df.pr.norm %>% 
+  ggplot(aes(x = time_h, y = fl_od_norm, colour = location)) +
+  plot_summary_ind_strain(colors.scheme = color.scheme.3) +
+  labs(
+    x = p.label.time.h,
+    y = bquote("Background corrected fluorescence"%.%"OD"[730]^-1)
+  ) 
+```
+
+### Results after step 4
+
+```{r, fig.width=11.11, fig.height=7, out.width="100%"}
+df.pr.norm %>% 
+  ggplot(aes(x = time_h, y = fl_od_norm_0_to_1, colour = induction)) +
+  plot_summary_location_strain() +
+  scale_y_continuous(labels = scales::percent_format(), limits = c(0, 1)) +
+  labs(
+    x = p.label.time.h,
+    y = bquote("Relative fluorescence"%.%"OD"[730]^-1~"(%)")
+  ) 
+```
+
+```{r, fig.width=11.11, fig.height=6.25, out.width="100%"}
+df.pr.norm %>% 
+  ggplot(aes(x = time_h, y = fl_od_norm_0_to_1, colour = location)) +
+  plot_summary_ind_strain(colors.scheme = color.scheme.3) +
+  scale_y_continuous(labels = scales::percent_format(), limits = c(0, 1)) +
+  labs(
+    x = p.label.time.h,
+    y = bquote("Relative fluorescence"%.%"OD"[730]^-1~"(%)")
+  ) 
+```

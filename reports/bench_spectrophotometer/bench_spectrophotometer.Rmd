@@ -1,0 +1,40 @@
+---
+title: "Interlab study"
+subtitle: "Spectrophotometer"
+author: "Hugo Pineda"
+date: "`r strftime(Sys.Date(), '%B %d %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE, warning=FALSE
+  
+)
+
+library("tidyverse")
+theme_set(theme_bw(14))
+```
+
+```{r load_data, include=FALSE}
+# Load project settings
+source(here::here("settings.R"))
+# load functions
+source(file.path(data.raw.dir, "experiments.R"))
+df.spectrophotometer <- load_spectrophotometer() 
+```
+
+
+```{r}
+df.spectrophotometer %>% 
+  filter(!is.na(OD_730)) %>% 
+  ggplot(aes(x = time_h, y = OD_730, colour = induction)) +
+  geom_point() +
+  geom_line() +
+  facet_grid(location~strain) +
+  expand_limits(y = 0) +
+  labs(
+    x = p.label.time.h,
+    y = p.label.od.730
+  )
+```
