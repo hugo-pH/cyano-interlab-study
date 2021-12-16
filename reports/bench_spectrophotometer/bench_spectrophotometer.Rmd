@@ -13,6 +13,7 @@ knitr::opts_chunk$set(
 )
 
 library("tidyverse")
+library(ggthemes)
 theme_set(theme_bw(14))
 ```
 
@@ -37,4 +38,77 @@ df.spectrophotometer %>%
     x = p.label.time.h,
     y = p.label.od.730
   )
+```
+
+```{r, out.width = "100%", fig.width=10.4, fig.height=6.6}
+df.spectrophotometer %>% 
+  filter(!is.na(location)) %>% 
+  ggplot(aes(x = time_h, y = log(OD_730), colour = induction)) +
+  geom_smooth(method = "lm") +
+  geom_point() +
+  facet_grid(location~strain) +
+  scale_colour_colorblind() +
+  expand_limits(y = 0) +
+  labs(
+    x = p.label.time.h,
+    y = p.label.ln.od.730
+  )
+```
+
+
+```{r}
+
+df.growth.rates <- df.spectrophotometer %>% 
+  filter(!is.na(location)) %>% 
+  group_by(location, strain, induction) %>% 
+  nest() %>% 
+  mutate(
+    model = map(data, ~lm(log(OD_730)~time_h, data = .)),
+    coeffs = map(model, broom::tidy),
+    r_squared = map(model, broom::glance)
+  ) %>% 
+  unnest(coeffs) %>% 
+  filter(term == "time_h") %>% 
+  select(-c(std.error, statistic, p.value)) %>% 
+  unnest(r_squared) 
+
+
+```
+
+```{r}
+color.scheme.3 <- c("Amsterdam" = "#D55E00", 
+                  "Jena" = "#009E73",
+                  "Seville" = "#0072B2")
+```
+
+
+```{r, out.width = "100%", fig.width=15.2, fig.height=5.5}
+df.growth.rates %>% 
+  ggplot(aes(x = strain, y = estimate)) +
+  geom_col(aes(fill = induction), position = "dodge") +
+  facet_wrap(~location) +
+  scale_fill_colorblind() +
+  geom_label(aes(y = 0.02, label = round(r.squared, 2), group = induction), position = position_dodge(width = 1)) +
+  labs(
+    y = p.label.mu,
+    x = "Strain",
+    title = "Estimated growth rate",
+    subtitle = bquote("Text box shows R"^2~"from linear regression")
+  )
+
+```
+
+
+```{r, out.width = "100%", fig.width=11.1, fig.height=7.3}
+df.growth.rates %>% 
+  ggplot(aes(x = location, y = estimate)) +
+  geom_col(position = "dodge") +
+  facet_grid(strain~induction) +
+  geom_label(aes(y = 0.02, label = round(r.squared, 2), group = induction), position = position_dodge(width = 1)) +
+  labs(
+    y = p.label.mu,
+    title = "Estimated growth rate",
+    subtitle = bquote("Text box shows R"^2~"from linear regression")
+  )
+
 ```
